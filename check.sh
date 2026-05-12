@@ -579,7 +579,7 @@ write_csv_row() {
     if [ -z "$CSV_FILE" ]; then return; fi
     local raw="$1"
     local clean
-    clean=$(printf '%s' "$raw" | sed 's/\r//g; s/\x1b\[[0-9;]*m//g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+    clean=$(printf '%s' "$raw" | sed 's/\r//g; s/\x1b\[[0-9;]*m//g; s/^[[:space:]]*//; s/[[:space:]]*$//')
     if [ -z "$clean" ]; then return; fi
     local service
     local result_val
@@ -587,6 +587,7 @@ write_csv_row() {
     result_val=$(echo "$clean" | sed 's/^[^:]*:[[:space:]]*//' | xargs)
     local timestamp
     timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    # USE_PROXY is set as "-x <url>" by process(); strip the leading "-x " to get the bare URL
     local proxy_val="${USE_PROXY#-x }"
     printf '"%s","%s","%s","%s","%s"\n' \
         "${timestamp}" "${PUBLIC_IPV4:-unknown}" "${proxy_val:-direct}" "${service}" "${result_val}" \
@@ -5630,7 +5631,7 @@ function inputOptions() {
             echo -e "${Font_SkyBlue}Input Number  [0]: [ Multination Only ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [88]: [ Instagram Music ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number [99]: [ Sport Platforms ]${Font_Suffix}"
-            echo -e "${Font_SkyBlue}Input Number [66]: [ All Platfroms ]${Font_Suffix}"
+            echo -e "${Font_SkyBlue}Input Number [66]: [ All Platforms ]${Font_Suffix}"
             read -p "Please Input the Correct Number or Press ENTER:" num
         else
             echo -e "${Font_Blue}请选择检测项目，直接按回车将进行[跨国+欧洲(GB)]检测${Font_Suffix}"
