@@ -170,7 +170,7 @@ validate_region_id() {
         exit 1
     fi
     local regionid="$1"
-    local result=$(echo "$regionid" | grep -E '^[0-9]$|^1[0-1]$|^99$|^88$|^66$')
+    local result=$(echo "$regionid" | grep -E '^[0-9]$|^1[0-2]$|^99$|^88$|^66$')
     if [ -z "$result" ]; then
         return 1
     fi
@@ -362,6 +362,54 @@ check_dependencies() {
     fi
 }
 
+show_usage() {
+    echo "Usage: bash check.sh [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -I, --interface <iface>    Use specific network interface"
+    echo "  -M, --network-type <n>     Force IPv4 (4), IPv6 (6), or auto (0) [default: 4]"
+    echo "  -E, --language <lang>      Language: en or zh [default: en]"
+    echo "  -X, --x-forwarded-for <ip> Set X-Forwarded-For header"
+    echo "  -P, --proxy <url>          Route all requests through proxy"
+    echo "  -R, --region <id>          Test region ID [default: 12]"
+    echo "  -O, --output <file>        Write results to CSV file"
+    echo "  -h, --help                 Show this help message"
+    echo ""
+    echo "Proxy URL formats:"
+    echo "  socks5://1.2.3.4:1080"
+    echo "  socks5://user:pass@1.2.3.4:1080"
+    echo "  http://1.2.3.4:8080"
+    echo "  http://user:pass@1.2.3.4:8080"
+    echo ""
+    echo "Region IDs:"
+    echo "   0 = Multination Only"
+    echo "   1 = Multination + Taiwan"
+    echo "   2 = Multination + Hong Kong"
+    echo "   3 = Multination + Japan"
+    echo "   4 = Multination + North America"
+    echo "   5 = Multination + South America"
+    echo "   6 = Multination + Europe (Full)"
+    echo "   7 = Multination + Oceania"
+    echo "   8 = Multination + Korea"
+    echo "   9 = Multination + South East Asia"
+    echo "  10 = Multination + India"
+    echo "  11 = Multination + Africa"
+    echo "  12 = Multination + Europe (GB Only) [DEFAULT]"
+    echo "  66 = All Platforms"
+    echo "  88 = Instagram Music"
+    echo "  99 = Sport Platforms"
+    echo ""
+    echo "Examples:"
+    echo "  # Run default (Multination + Europe GB Only) via SOCKS5 proxy, save CSV:"
+    echo "  bash check.sh -P socks5://1.2.3.4:1080 -O results.csv"
+    echo ""
+    echo "  # Run via HTTP proxy with authentication:"
+    echo "  bash check.sh -P http://user:pass@1.2.3.4:8080 -O results.csv"
+    echo ""
+    echo "  # Run full Europe test via proxy:"
+    echo "  bash check.sh -P socks5://1.2.3.4:1080 -R 6 -O results.csv"
+}
+
 process() {
     local iface=''
     local xip=''
@@ -398,6 +446,14 @@ process() {
         -R | --region)
             local regionid="$2"
             shift
+            ;;
+        -O | --output)
+            CSV_FILE="$2"
+            shift
+            ;;
+        -h | --help)
+            show_usage
+            exit 0
             ;;
         *)
             echo -e "${Font_Red}Unknown error while processing options.${Font_Suffix}"
@@ -436,7 +492,7 @@ process() {
     fi
 
     if [ -z "$netType" ]; then
-        NETWORK_TYPE=''
+        NETWORK_TYPE='4'
     fi
 
     if [ -n "$netType" ]; then
@@ -447,7 +503,7 @@ process() {
     fi
 
     if [ -z "$LANGUAGE" ]; then
-        LANGUAGE='zh'
+        LANGUAGE='en'
     fi
 
     if [ -n "$regionid" ]; then
@@ -491,7 +547,8 @@ download_extra_data() {
 get_ip_info() {
     LOCAL_IP_ASTERISK=''
     LOCAL_ISP=''
-    local local_ip=$(curl ${CURL_DEFAULT_OPTS} -s https://api64.ipify.org --user-agent "${UA_BROWSER}")
+    PUBLIC_IPV4=''
+    local local_ip=$(curl ${CURL_DEFAULT_OPTS} -4 -s https://api4.ipify.org --user-agent "${UA_BROWSER}")
     local get_local_isp=$(curl ${CURL_DEFAULT_OPTS} -s "https://api.ip.sb/geoip/${local_ip}" -H 'accept: */*;q=0.8,application/signed-exchange;v=b3;q=0.7' -H 'accept-language: en-US,en;q=0.9' -H "sec-ch-ua: ${UA_SEC_CH_UA}" -H 'sec-ch-ua-mobile: ?0' -H 'sec-ch-ua-platform: "Windows"' -H 'sec-fetch-dest: document' -H 'sec-fetch-mode: navigate' -H 'sec-fetch-site: none' -H 'sec-fetch-user: ?1' -H 'upgrade-insecure-requests: 1' --user-agent "${UA_BROWSER}")
 
     if [ -z "$local_ip" ]; then
@@ -505,6 +562,7 @@ get_ip_info() {
     local resp="$?"
     if [ "$resp" == 4 ]; then
         LOCAL_IP_ASTERISK=$(awk -F"." '{print $1"."$2".*.*"}' <<<"${local_ip}")
+        PUBLIC_IPV4="${local_ip}"
     fi
     if [ "$resp" == 6 ]; then
         LOCAL_IP_ASTERISK=$(awk -F":" '{print $1":"$2":"$3":*:*"}' <<<"${local_ip}")
@@ -515,6 +573,24 @@ get_ip_info() {
 
 show_region() {
     echo -e "${Font_Yellow} ---${1}---${Font_Suffix}"
+}
+
+write_csv_row() {
+    if [ -z "$CSV_FILE" ]; then return; fi
+    local raw="$1"
+    local clean
+    clean=$(printf '%s' "$raw" | sed 's/\r//g; s/\x1b\[[0-9;]*m//g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+    if [ -z "$clean" ]; then return; fi
+    local service
+    local result_val
+    service=$(echo "$clean" | sed 's/:[[:space:]]*.*//' | xargs)
+    result_val=$(echo "$clean" | sed 's/^[^:]*:[[:space:]]*//' | xargs)
+    local timestamp
+    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    local proxy_val="${USE_PROXY#-x }"
+    printf '"%s","%s","%s","%s","%s"\n' \
+        "${timestamp}" "${PUBLIC_IPV4:-unknown}" "${proxy_val:-direct}" "${service}" "${result_val}" \
+        >> "${CSV_FILE}"
 }
 
 function GameTest_Steam() {
@@ -4992,7 +5068,10 @@ function MediaUnlockTest_AMCPlus() {
 
 function echo_result() {
     for ((i=0;i<${#array[@]};i++)); do
-        echo "$result" | grep "${array[i]}"
+        local _line
+        _line=$(echo "$result" | grep "${array[i]}")
+        echo "$_line"
+        write_csv_row "$_line"
         delay 0.03
     done
 }
@@ -5031,9 +5110,15 @@ function Global_UnlockTest() {
     local array=("Bing Region:" "Apple Region:" "YouTube CDN:" "Netflix Preferred CDN:" "ChatGPT:" "Google Gemini:" "Claude:" "Wikipedia Editability:" "Google Play Store:" "Google Search CAPTCHA Free:" "Steam Currency:")
     echo_result ${result} ${array}
     show_region Forum
-    WebTest_Reddit
+    local _reddit_line
+    _reddit_line=$(WebTest_Reddit)
+    echo "$_reddit_line"
+    write_csv_row "$_reddit_line"
     show_region Game
-    GameTest_SDGGGE
+    local _sdggge_line
+    _sdggge_line=$(GameTest_SDGGGE)
+    echo "$_sdggge_line"
+    write_csv_row "$_sdggge_line"
     echo "======================================="
 }
 
@@ -5184,6 +5269,40 @@ function EU_UnlockTest() {
     echo "$result" | grep "SKY CH:"
     show_region RU
     echo "$result" | grep "Amediateka:"
+    echo "======================================="
+}
+
+function EU_GB_UnlockTest() {
+    echo "===============[ Europe ]=============="
+    local result=$(
+        MediaUnlockTest_ParamountPlus &
+        MediaUnlockTest_DiscoveryPlus &
+        MediaUnlockTest_SonyLiv &
+        MediaUnlockTest_HBOMax &
+        MediaUnlockTest_SkyShowTime &
+        MediaUnlockTest_BritBox &
+        MediaUnlockTest_RakutenTV &
+        MediaUnlockTest_MegogoTV &
+        MediaUnlockTest_SetantaSports &
+        GameTest_MathsSpot &
+    )
+    wait
+    local array=("Paramount+:" "Discovery+:" "SonyLiv:" "HBO Max:" "SkyShowTime:" "BritBox:" "Rakuten TV:" "Megogo TV:" "Setanta Sports:" "MathsSpot Roblox:")
+    echo_result ${result} ${array}
+    show_region GB
+    local result=$(
+        MediaUnlockTest_HotStar &
+        MediaUnlockTest_SkyGo &
+        MediaUnlockTest_ITVHUB &
+        MediaUnlockTest_Channel4 &
+        MediaUnlockTest_Channel5 &
+        MediaUnlockTest_BBCiPLAYER &
+        MediaUnlockTest_AcornTV &
+        MediaUnlockTest_Shudder &
+    )
+    wait
+    local array=("HotStar:" "Sky Go:" "ITV Hub:" "Channel 4:" "Channel 5:" "BBC iPLAYER:" "Acorn TV:" "Shudder:")
+    echo_result ${result} ${array}
     echo "======================================="
 }
 
@@ -5495,36 +5614,38 @@ function inputOptions() {
 
     while :; do
         if [ "$LANGUAGE" == 'en' ]; then
-            echo -e "${Font_Blue}Please Select Test Region or Press ENTER to Test All Regions${Font_Suffix}"
+            echo -e "${Font_Blue}Please Select Test Region or Press ENTER for default [Multination + Europe (GB Only)]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [1]: [ Multination + Taiwan ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [2]: [ Multination + Hong Kong ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [3]: [ Multination + Japan ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [4]: [ Multination + North America ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [5]: [ Multination + South America ]${Font_Suffix}"
-            echo -e "${Font_SkyBlue}Input Number  [6]: [ Multination + Europe ]${Font_Suffix}"
+            echo -e "${Font_SkyBlue}Input Number  [6]: [ Multination + Europe (Full) ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [7]: [ Multination + Oceania ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [8]: [ Multination + Korean ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [9]: [ Multination + SouthEast Asia ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [10]: [ Multination + India ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [11]: [ Multination + Africa ]${Font_Suffix}"
+            echo -e "${Font_SkyBlue}Input Number  [12]: [ Multination + Europe (GB Only) ] [DEFAULT]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [0]: [ Multination Only ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number  [88]: [ Instagram Music ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number [99]: [ Sport Platforms ]${Font_Suffix}"
             echo -e "${Font_SkyBlue}Input Number [66]: [ All Platfroms ]${Font_Suffix}"
             read -p "Please Input the Correct Number or Press ENTER:" num
         else
-            echo -e "${Font_Blue}请选择检测项目，直接按回车将进行全区域检测${Font_Suffix}"
+            echo -e "${Font_Blue}请选择检测项目，直接按回车将进行[跨国+欧洲(GB)]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [1]: [ 跨国平台+台湾平台 ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [2]: [ 跨国平台+香港平台 ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [3]: [ 跨国平台+日本平台 ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [4]: [ 跨国平台+北美平台 ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [5]: [ 跨国平台+南美平台 ]检测${Font_Suffix}"
-            echo -e "${Font_SkyBlue}输入数字  [6]: [ 跨国平台+欧洲平台 ]检测${Font_Suffix}"
+            echo -e "${Font_SkyBlue}输入数字  [6]: [ 跨国平台+欧洲平台(全) ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [7]: [跨国平台+大洋洲平台]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [8]: [ 跨国平台+韩国平台 ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [9]: [跨国平台+东南亚平台]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字 [10]: [ 跨国平台+印度平台 ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字 [11]: [ 跨国平台+非洲平台 ]检测${Font_Suffix}"
+            echo -e "${Font_SkyBlue}输入数字 [12]: [ 跨国平台+欧洲(GB) ]检测 [默认]${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字  [0]: [   只进行跨国平台  ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字 [88]: [   Instagram音乐   ]检测${Font_Suffix}"
             echo -e "${Font_SkyBlue}输入数字 [99]: [   体育直播平台    ]检测${Font_Suffix}"
@@ -5534,7 +5655,7 @@ function inputOptions() {
         fi
 
         if [ -z "$num" ]; then
-            REGION_ID=66
+            REGION_ID=12
             break
         fi
 
@@ -5731,6 +5852,10 @@ function checkIPConn() {
 function runScript() {
     showScriptTitle
 
+    if [ -n "$CSV_FILE" ]; then
+        printf '"timestamp","public_ipv4","proxy","service","result"\n' > "${CSV_FILE}"
+    fi
+
     USE_IPV4=0
     USE_IPV6=0
 
@@ -5902,6 +6027,19 @@ function runScript() {
         fi
         return
     fi
+    if [ "$REGION_ID" -eq 12 ]; then
+        checkIPConn 4
+        if [ "$USE_IPV4" -eq 1 ]; then
+            Global_UnlockTest
+            EU_GB_UnlockTest
+        fi
+        checkIPConn 6
+        if [ "$USE_IPV6" -eq 1 ]; then
+            Global_UnlockTest
+            EU_GB_UnlockTest
+        fi
+        return
+    fi
     if [ "$REGION_ID" -eq 66 ]; then
         checkIPConn 4
         if [ "$USE_IPV4" -eq 1 ]; then
@@ -5999,7 +6137,11 @@ showSupportOS
 showScriptTitle
 
 if [ -z "$REGION_ID" ]; then
-    inputOptions
+    if [ -t 0 ]; then
+        inputOptions
+    else
+        REGION_ID=12
+    fi
 fi
 
 download_extra_data
