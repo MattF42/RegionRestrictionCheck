@@ -860,7 +860,7 @@ function MediaUnlockTest_BBCiPLAYER() {
     fi
 
     local isBlocked=$(echo "$tmpresult" | grep -i 'geolocation')
-    local isOK=$(echo "$tmpresult" | grep -i 'vs-hls-push-uk')
+    local isOK=$(echo "$tmpresult" | grep -i 'vs-cmaf-push-uk')
 
     if [ -z "$isBlocked" ] && [ -z "$isOK" ]; then
         echo -n -e "\r BBC iPLAYER:\t\t\t\t${Font_Red}Failed (Error: PAGE ERROR)${Font_Suffix}\n"
